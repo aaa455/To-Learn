@@ -65,43 +65,197 @@ struct WorkflowView: View {
 }
 
 struct WorkflowDetailView: View {
-    let workflow: Workflow
+    @State private var workflow: Workflow
     @EnvironmentObject var dataManager: DataManager
+    @State private var isEditing = false
+    @State private var editingWorkflowName: String
+    @State private var editingWorkflowDescription: String
+    @State private var showingAddNode = false
+    @State private var editingNodeId: UUID?
+
+    init(workflow: Workflow) {
+        _workflow = State(initialValue: workflow)
+        _editingWorkflowName = State(initialValue: workflow.name)
+        _editingWorkflowDescription = State(initialValue: workflow.description)
+    }
 
     var body: some View {
         List {
-            Section(header: Text("描述")) {
-                Text(workflow.description)
+            Section(header: Text("基本信息")) {
+                if isEditing {
+                    TextField("名称", text: $editingWorkflowName)
+                    TextEditor(text: $editingWorkflowDescription)
+                        .frame(height: 60)
+                } else {
+                    Text(workflow.name)
+                        .font(.headline)
+                    Text(workflow.description)
+                        .foregroundColor(.secondary)
+                }
             }
 
-            Section(header: Text("节点")) {
-                ForEach(workflow.nodes) { node in
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text(node.name)
-                                .font(.headline)
-                            Spacer()
-                            if node.isRepeatable {
-                                Text("可重复")
-                                    .font(.caption)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(Color.blue.opacity(0.2))
-                                    .cornerRadius(8)
-                            }
-                        }
-                        Text(node.description)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text("时长: \(node.minDuration)-\(node.maxDuration) 分钟")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
+            Section(header: HStack {
+                Text("节点")
+                Spacer()
+                if isEditing {
+                    Button(action: { showingAddNode = true }) {
+                        Image(systemName: "plus.circle.fill")
                     }
-                    .padding(.vertical, 4)
+                }
+            }) {
+                ForEach(workflow.nodes) { node in
+                    Button(action: {
+                        if isEditing {
+                            editingNodeId = node.id
+                        }
+                    }) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text(node.name)
+                                    .font(.headline)
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                if node.isRepeatable {
+                                    Text("可重复")
+                                        .font(.caption)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(Color.blue.opacity(0.2))
+                                        .cornerRadius(8)
+                                }
+                            }
+                            if !node.description.isEmpty {
+                                Text(node.description)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Text("时长: \(node.minDuration)-\(node.maxDuration) 分钟")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+                .onDelete(perform: isEditing ? deleteNodes : nil)
+            }
+        }
+        .navigationTitle("工作流详情")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(isEditing ? "完成" : "编辑") {
+                    if isEditing {
+                        saveChanges()
+                    }
+                    isEditing.toggle()
                 }
             }
         }
-        .navigationTitle(workflow.name)
+        .sheet(isPresented: $showingAddNode) {
+            EditNodeSheet(
+                node: nil,
+                workflowId: workflow.id,
+                isPresented: $showingAddNode,
+                onSave: { newNode in
+                    workflow.nodes.append(newNode)
+                }
+            )
+        }
+        .sheet(item: $editingNodeId) { nodeId in
+            if let index = workflow.nodes.firstIndex(where: { $0.id == nodeId }) {
+                EditNodeSheet(
+                    node: workflow.nodes[index],
+                    workflowId: workflow.id,
+                    isPresented: Binding(
+                        get: { editingNodeId != nil },
+                        set: { if !$0 { editingNodeId = nil } }
+                    ),
+                    onSave: { updatedNode in
+                        workflow.nodes[index] = updatedNode
+                    }
+                )
+            }
+        }
+    }
+
+    private func saveChanges() {
+        workflow.name = editingWorkflowName
+        workflow.description = editingWorkflowDescription
+
+        if let index = dataManager.workflows.firstIndex(where: { $0.id == workflow.id }) {
+            dataManager.workflows[index] = workflow
+            dataManager.saveData()
+        }
+    }
+
+    private func deleteNodes(at offsets: IndexSet) {
+        workflow.nodes.remove(atOffsets: offsets)
+    }
+}
+
+struct EditNodeSheet: View {
+    let node: WorkflowNode?
+    let workflowId: UUID
+    @Binding var isPresented: Bool
+    let onSave: (WorkflowNode) -> Void
+
+    @State private var name: String
+    @State private var description: String
+    @State private var minDuration: Int
+    @State private var maxDuration: Int
+    @State private var isRepeatable: Bool
+
+    init(node: WorkflowNode?, workflowId: UUID, isPresented: Binding<Bool>, onSave: @escaping (WorkflowNode) -> Void) {
+        self.node = node
+        self.workflowId = workflowId
+        self._isPresented = isPresented
+        self.onSave = onSave
+
+        _name = State(initialValue: node?.name ?? "")
+        _description = State(initialValue: node?.description ?? "")
+        _minDuration = State(initialValue: node?.minDuration ?? 10)
+        _maxDuration = State(initialValue: node?.maxDuration ?? 30)
+        _isRepeatable = State(initialValue: node?.isRepeatable ?? false)
+    }
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("节点名称")) {
+                    TextField("例如：预扫描", text: $name)
+                }
+
+                Section(header: Text("节点描述")) {
+                    TextEditor(text: $description)
+                        .frame(height: 100)
+                }
+
+                Section(header: Text("时长范围（分钟）")) {
+                    Stepper("最小: \(minDuration) 分钟", value: $minDuration, in: 1...120, step: 5)
+                    Stepper("最大: \(maxDuration) 分钟", value: $maxDuration, in: minDuration...180, step: 5)
+                }
+
+                Section {
+                    Toggle("可重复执行", isOn: $isRepeatable)
+                }
+            }
+            .navigationTitle(node == nil ? "添加节点" : "编辑节点")
+            .navigationBarItems(
+                leading: Button("取消") { isPresented = false },
+                trailing: Button("保存") {
+                    let updatedNode = WorkflowNode(
+                        id: node?.id ?? UUID(),
+                        name: name,
+                        description: description,
+                        minDuration: minDuration,
+                        maxDuration: maxDuration,
+                        isRepeatable: isRepeatable
+                    )
+                    onSave(updatedNode)
+                    isPresented = false
+                }
+                .disabled(name.isEmpty)
+            )
+        }
     }
 }
 

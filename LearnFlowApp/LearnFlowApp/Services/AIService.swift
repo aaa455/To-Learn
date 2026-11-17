@@ -253,19 +253,23 @@ class AIService: ObservableObject {
 
         要求：
         1. 工作流应该包含3-7个学习节点
-        2. 每个节点需要有明确的名称、时间范围（最小和最大分钟数）、简介
-        3. 节点应基于科学的学习理论（如费曼学习法、番茄工作法、艾宾浩斯遗忘曲线等）
-        4. 标注哪些节点是可重复的
+        2. 工作流整体描述要说明学习方法的科学依据和预期效果
+        3. 每个节点需要：
+           - 明确的名称
+           - 详细的描述（说明该节点的具体操作方法和目的）
+           - 时间范围（最小和最大分钟数）
+           - 标注是否可重复
+        4. 节点应基于科学的学习理论（如费曼学习法、番茄工作法、艾宾浩斯遗忘曲线等）
         5. 包含自我检测学习质量的方法
 
         请以JSON格式返回，格式如下：
         {
           "name": "工作流名称",
-          "description": "工作流描述",
+          "description": "工作流整体描述，说明学习方法原理和预期效果",
           "nodes": [
             {
               "name": "节点名称",
-              "description": "节点描述",
+              "description": "详细描述该节点的具体操作方法、为什么这样做、达到什么效果",
               "minDuration": 最小时长(分钟),
               "maxDuration": 最大时长(分钟),
               "isRepeatable": true/false
@@ -277,24 +281,38 @@ class AIService: ObservableObject {
 
     // 生成时间计划提示词
     private func generateTimePlanPrompt(workflow: Workflow, availableMinutes: Int) -> String {
+        let workflowDesc = """
+        工作流名称：\(workflow.name)
+        工作流描述：\(workflow.description)
+        """
+
         let nodesDesc = workflow.nodes.map { node in
-            "\(node.name): \(node.minDuration)-\(node.maxDuration)分钟, 可重复: \(node.isRepeatable ? "是" : "否")"
-        }.joined(separator: "\n")
+            """
+            节点：\(node.name)
+            描述：\(node.description)
+            时长范围：\(node.minDuration)-\(node.maxDuration)分钟
+            可重复：\(node.isRepeatable ? "是" : "否")
+            """
+        }.joined(separator: "\n\n")
 
         return """
-        请为以下工作流生成2-3种时间安排方案。
+        请为以下学习工作流生成2-3种时间安排方案。
 
-        工作流节点：
+        \(workflowDesc)
+
+        工作流节点详情：
         \(nodesDesc)
 
         可用时间：\(availableMinutes)分钟
 
         要求：
-        1. 合理分配每个节点的时间，总时间不超过可用时间
-        2. 待办任务也作为一种阶段类型参与时间划分，如果时间不足以完成所有节点，将部分节点作为待办阶段安排在计时中
-        3. 待办阶段在计时中标记为"待办"类型，用户可以选择跳过或稍后完成
-        4. 可重复节点可以安排多次
-        5. 生成2-3种不同的方案供用户选择
+        1. 根据工作流整体描述和各节点描述，理解学习方法的原理
+        2. 根据节点描述的具体操作方法，合理分配每个节点的时间
+        3. 总时间不超过可用时间
+        4. 待办任务也作为一种阶段类型参与时间划分：如果时间不足以完成所有节点，将优先级较低的节点作为待办阶段（isTodo: true）安排在计时中
+        5. 待办阶段用户可以选择跳过或稍后完成
+        6. 可重复节点可以安排多次
+        7. 生成2-3种不同的方案供用户选择
 
         请以JSON格式返回，格式如下：
         {
@@ -304,7 +322,7 @@ class AIService: ObservableObject {
                 {
                   "nodeName": "节点名称",
                   "duration": 时长(分钟),
-                  "order": 顺序,
+                  "order": 顺序(从0开始),
                   "isTodo": false
                 },
                 {
@@ -319,7 +337,10 @@ class AIService: ObservableObject {
           ]
         }
 
-        注意：isTodo为true的阶段表示这是一个待办任务，用户在计时时可以选择跳过，稍后单独完成
+        注意：
+        - isTodo为true的阶段表示这是一个待办任务，用户在计时时可以选择跳过
+        - 根据节点描述的重要性和依赖关系，决定哪些节点应该作为待办任务
+        - order从0开始递增，表示执行顺序
         """
     }
 
