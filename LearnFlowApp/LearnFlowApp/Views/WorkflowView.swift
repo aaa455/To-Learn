@@ -71,7 +71,7 @@ struct WorkflowDetailView: View {
     @State private var editingWorkflowName: String
     @State private var editingWorkflowDescription: String
     @State private var showingAddNode = false
-    @State private var editingNodeId: UUID?
+    @State private var editingNode: WorkflowNode?
 
     init(workflow: Workflow) {
         _workflow = State(initialValue: workflow)
@@ -106,7 +106,7 @@ struct WorkflowDetailView: View {
                 ForEach(workflow.nodes) { node in
                     Button(action: {
                         if isEditing {
-                            editingNodeId = node.id
+                            editingNode = node
                         }
                     }) {
                         VStack(alignment: .leading, spacing: 8) {
@@ -160,14 +160,14 @@ struct WorkflowDetailView: View {
                 }
             )
         }
-        .sheet(item: $editingNodeId) { nodeId in
-            if let index = workflow.nodes.firstIndex(where: { $0.id == nodeId }) {
+        .sheet(item: $editingNode) { node in
+            if let index = workflow.nodes.firstIndex(where: { $0.id == node.id }) {
                 EditNodeSheet(
                     node: workflow.nodes[index],
                     workflowId: workflow.id,
                     isPresented: Binding(
-                        get: { editingNodeId != nil },
-                        set: { if !$0 { editingNodeId = nil } }
+                        get: { editingNode != nil },
+                        set: { if !$0 { editingNode = nil } }
                     ),
                     onSave: { updatedNode in
                         workflow.nodes[index] = updatedNode
