@@ -1,5 +1,8 @@
 import Foundation
 import Combine
+#if os(iOS)
+import UIKit
+#endif
 
 // 计时器管理器
 class TimerManager: ObservableObject {
@@ -104,7 +107,6 @@ class TimerManager: ObservableObject {
 
     private func triggerVibration() {
         #if os(iOS)
-        import UIKit
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         #endif
     }

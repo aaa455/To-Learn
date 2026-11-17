@@ -120,7 +120,7 @@ struct FocusView: View {
         }
         .alert("跳过待办", isPresented: $showingSkipConfirmation) {
             Button("取消", role: .cancel) { }
-            Button("跳过", role: .default) {
+            Button("跳过") {
                 timerManager.skipCurrentPhase()
             }
         } message: {

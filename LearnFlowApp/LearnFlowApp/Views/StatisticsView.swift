@@ -77,12 +77,12 @@ struct StatisticsView: View {
                             }
 
                             VStack {
-                                Text("\(completedSessions.filter { session in
+                                Text(completedSessions.filter { session in
                                     if let endTime = session.endTime {
                                         return Calendar.current.isDate(endTime, inSameDayAs: Date())
                                     }
                                     return false
-                                }.count)")
+                                }.count.formatted())
                                     .font(.system(size: 48, weight: .thin))
                                 Text("次数")
                                     .font(.caption)

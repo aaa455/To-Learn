@@ -205,11 +205,11 @@ struct TimePlanSheet: View {
                                         .font(.caption)
                                     }
 
-                                    if !plan.todoTasks.isEmpty {
+                                    if !plan.todoPhases.isEmpty {
                                         Text("今日待办:")
                                             .font(.caption)
                                             .foregroundColor(.orange)
-                                        ForEach(plan.todoTasks) { todo in
+                                        ForEach(plan.todoPhases) { todo in
                                             HStack {
                                                 Text("• \(todo.nodeName)")
                                                 Spacer()
