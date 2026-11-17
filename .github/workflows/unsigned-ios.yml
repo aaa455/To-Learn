@@ -1,0 +1,92 @@
+name: Build unsigned iOS IPA
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'LearnFlowApp/**'
+      - '.github/workflows/unsigned-ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unsigned-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode environment
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks
+
+      - name: Build for iPhone and iPad without signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project LearnFlowApp/LearnFlowApp.xcodeproj \
+            -scheme LearnFlowApp \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            build 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
+
+      - name: Package and verify unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/LearnFlowApp.app"
+          test -d "$APP"
+          test ! -e "$APP/_CodeSignature"
+          test ! -e "$APP/embedded.mobileprovision"
+          if codesign -dv "$APP" > "$RUNNER_TEMP/signature.txt" 2>&1; then
+            echo 'Unexpected signed application'
+            exit 1
+          fi
+          grep -q 'not signed at all' "$RUNNER_TEMP/signature.txt"
+          file "$APP/LearnFlowApp" | grep 'arm64'
+          mkdir -p "$RUNNER_TEMP/ipa/Payload" "$GITHUB_WORKSPACE/dist"
+          ditto "$APP" "$RUNNER_TEMP/ipa/Payload/LearnFlowApp.app"
+          cd "$RUNNER_TEMP/ipa"
+          ditto -c -k --keepParent Payload "$GITHUB_WORKSPACE/dist/LearnFlowApp-unsigned.ipa"
+          cd "$GITHUB_WORKSPACE/dist"
+          unzip -t LearnFlowApp-unsigned.ipa
+          shasum -a 256 LearnFlowApp-unsigned.ipa > LearnFlowApp-unsigned.ipa.sha256
+          {
+            echo '### Unsigned iOS build'
+            echo "Commit: $GITHUB_SHA"
+            echo 'Download the LearnFlowApp-unsigned artifact below.'
+            echo 'This device build requires signing before installation on a standard iPhone or iPad.'
+            echo '```'
+            cat LearnFlowApp-unsigned.ipa.sha256
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: LearnFlowApp-unsigned
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: ${{ runner.temp }}/xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 7
