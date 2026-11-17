@@ -24,11 +24,23 @@ struct ContentView: View {
                 }
                 .tag(2)
 
+            TodoView()
+                .tabItem {
+                    Label("待办", systemImage: "checkmark.circle")
+                }
+                .tag(3)
+
             ReviewView()
                 .tabItem {
                     Label("复习", systemImage: "book")
                 }
-                .tag(3)
+                .tag(4)
+
+            SettingsView()
+                .tabItem {
+                    Label("设置", systemImage: "gearshape")
+                }
+                .tag(5)
         }
     }
 }

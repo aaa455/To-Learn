@@ -11,23 +11,37 @@ struct AIConfig: Codable {
     var provider: AIProvider
     var apiKey: String
     var baseURL: String?
+    var model: String? // 选择的模型
 
     static var claude: AIConfig {
-        AIConfig(provider: .claude, apiKey: "", baseURL: "https://api.anthropic.com")
+        AIConfig(provider: .claude, apiKey: "", baseURL: "https://api.anthropic.com", model: "claude-3-5-sonnet-20241022")
     }
 
     static var openai: AIConfig {
-        AIConfig(provider: .openai, apiKey: "", baseURL: "https://api.openai.com/v1")
+        AIConfig(provider: .openai, apiKey: "", baseURL: "https://api.openai.com/v1", model: "gpt-4")
     }
 
     static var deepseek: AIConfig {
-        AIConfig(provider: .deepseek, apiKey: "", baseURL: "https://api.deepseek.com")
+        AIConfig(provider: .deepseek, apiKey: "", baseURL: "https://api.deepseek.com", model: "deepseek-chat")
+    }
+}
+
+// 模型信息
+struct AIModel: Identifiable, Codable {
+    let id: String
+    let name: String
+    let provider: AIProvider
+
+    var displayName: String {
+        name
     }
 }
 
 // AI服务
 class AIService: ObservableObject {
     @Published var currentConfig: AIConfig
+    @Published var availableModels: [AIModel] = []
+    @Published var isLoadingModels = false
 
     init() {
         // 从UserDefaults加载配置
@@ -37,11 +51,144 @@ class AIService: ObservableObject {
         } else {
             self.currentConfig = .claude
         }
+
+        // 加载默认模型列表
+        loadDefaultModels()
     }
 
     func saveConfig() {
         if let encoded = try? JSONEncoder().encode(currentConfig) {
             UserDefaults.standard.set(encoded, forKey: "aiConfig")
+        }
+    }
+
+    // 加载默认模型列表
+    func loadDefaultModels() {
+        availableModels = getDefaultModels(for: currentConfig.provider)
+    }
+
+    // 获取默认模型列表
+    private func getDefaultModels(for provider: AIProvider) -> [AIModel] {
+        switch provider {
+        case .claude:
+            return [
+                AIModel(id: "claude-3-5-sonnet-20241022", name: "Claude 3.5 Sonnet", provider: .claude),
+                AIModel(id: "claude-3-5-haiku-20241022", name: "Claude 3.5 Haiku", provider: .claude),
+                AIModel(id: "claude-3-opus-20240229", name: "Claude 3 Opus", provider: .claude),
+                AIModel(id: "claude-3-sonnet-20240229", name: "Claude 3 Sonnet", provider: .claude),
+                AIModel(id: "claude-3-haiku-20240307", name: "Claude 3 Haiku", provider: .claude)
+            ]
+        case .openai:
+            return [
+                AIModel(id: "gpt-4o", name: "GPT-4o", provider: .openai),
+                AIModel(id: "gpt-4o-mini", name: "GPT-4o Mini", provider: .openai),
+                AIModel(id: "gpt-4-turbo", name: "GPT-4 Turbo", provider: .openai),
+                AIModel(id: "gpt-4", name: "GPT-4", provider: .openai),
+                AIModel(id: "gpt-3.5-turbo", name: "GPT-3.5 Turbo", provider: .openai)
+            ]
+        case .deepseek:
+            return [
+                AIModel(id: "deepseek-chat", name: "DeepSeek Chat", provider: .deepseek),
+                AIModel(id: "deepseek-coder", name: "DeepSeek Coder", provider: .deepseek)
+            ]
+        }
+    }
+
+    // 从API获取模型列表
+    func fetchModels(completion: @escaping (Result<[AIModel], Error>) -> Void) {
+        guard !currentConfig.apiKey.isEmpty else {
+            completion(.failure(NSError(domain: "AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: "请先配置API Key"])))
+            return
+        }
+
+        isLoadingModels = true
+
+        switch currentConfig.provider {
+        case .claude:
+            fetchClaudeModels(completion: completion)
+        case .openai:
+            fetchOpenAIModels(completion: completion)
+        case .deepseek:
+            fetchDeepSeekModels(completion: completion)
+        }
+    }
+
+    private func fetchClaudeModels(completion: @escaping (Result<[AIModel], Error>) -> Void) {
+        // Claude API 没有列出模型的端点，使用默认列表
+        DispatchQueue.main.async {
+            self.isLoadingModels = false
+            self.availableModels = self.getDefaultModels(for: .claude)
+            completion(.success(self.availableModels))
+        }
+    }
+
+    private func fetchOpenAIModels(completion: @escaping (Result<[AIModel], Error>) -> Void) {
+        guard let url = URL(string: "\(currentConfig.baseURL ?? "https://api.openai.com/v1")/models") else {
+            completion(.failure(NSError(domain: "AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: "无效的API地址"])))
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(currentConfig.apiKey)", forHTTPHeaderField: "Authorization")
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            guard let self = self else { return }
+
+            DispatchQueue.main.async {
+                self.isLoadingModels = false
+            }
+
+            if let error = error {
+                DispatchQueue.main.async {
+                    completion(.failure(error))
+                }
+                return
+            }
+
+            guard let data = data else {
+                DispatchQueue.main.async {
+                    completion(.failure(NSError(domain: "AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: "无响应数据"])))
+                }
+                return
+            }
+
+            do {
+                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let modelsArray = json["data"] as? [[String: Any]] {
+                    let models = modelsArray.compactMap { modelData -> AIModel? in
+                        guard let id = modelData["id"] as? String else { return nil }
+                        // 只返回 GPT 模型
+                        if id.hasPrefix("gpt") {
+                            return AIModel(id: id, name: id, provider: .openai)
+                        }
+                        return nil
+                    }
+
+                    DispatchQueue.main.async {
+                        self.availableModels = models.isEmpty ? self.getDefaultModels(for: .openai) : models
+                        completion(.success(self.availableModels))
+                    }
+                } else {
+                    DispatchQueue.main.async {
+                        self.availableModels = self.getDefaultModels(for: .openai)
+                        completion(.success(self.availableModels))
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    completion(.failure(error))
+                }
+            }
+        }.resume()
+    }
+
+    private func fetchDeepSeekModels(completion: @escaping (Result<[AIModel], Error>) -> Void) {
+        // DeepSeek 使用默认模型列表
+        DispatchQueue.main.async {
+            self.isLoadingModels = false
+            self.availableModels = self.getDefaultModels(for: .deepseek)
+            completion(.success(self.availableModels))
         }
     }
 
@@ -109,7 +256,7 @@ class AIService: ObservableObject {
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
 
         let body: [String: Any] = [
-            "model": "claude-3-5-sonnet-20241022",
+            "model": currentConfig.model ?? "claude-3-5-sonnet-20241022",
             "max_tokens": 4096,
             "messages": [
                 ["role": "user", "content": prompt]
@@ -158,7 +305,7 @@ class AIService: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let body: [String: Any] = [
-            "model": "gpt-4",
+            "model": currentConfig.model ?? "gpt-4",
             "messages": [
                 ["role": "user", "content": prompt]
             ]
@@ -208,7 +355,7 @@ class AIService: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let body: [String: Any] = [
-            "model": "deepseek-chat",
+            "model": currentConfig.model ?? "deepseek-chat",
             "messages": [
                 ["role": "user", "content": prompt]
             ]

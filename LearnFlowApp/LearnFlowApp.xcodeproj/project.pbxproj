@@ -22,6 +22,12 @@
 		0000000000000000A100001D /* FocusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000A100001C /* FocusView.swift */; };
 		0000000000000000A100001F /* StatisticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000A100001E /* StatisticsView.swift */; };
 		0000000000000000A1000021 /* ReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000A1000020 /* ReviewView.swift */; };
+		0000000000000000A3000001 /* TodoModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000A3000000 /* TodoModel.swift */; };
+		0000000000000000A3000003 /* FolderDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000A3000002 /* FolderDetailView.swift */; };
+		0000000000000000A3000005 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000A3000004 /* SettingsView.swift */; };
+		0000000000000000A3000007 /* TaskDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000A3000006 /* TaskDetailView.swift */; };
+		0000000000000000A3000009 /* TaskGraphView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000A3000008 /* TaskGraphView.swift */; };
+		0000000000000000A300000B /* TodoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000A300000A /* TodoView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -41,6 +47,12 @@
 		0000000000000000A100001E /* StatisticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatisticsView.swift; sourceTree = "<group>"; };
 		0000000000000000A1000020 /* ReviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewView.swift; sourceTree = "<group>"; };
 		0000000000000000A1000022 /* ScreenTimeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenTimeService.swift; sourceTree = "<group>"; };
+		0000000000000000A3000000 /* TodoModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodoModel.swift; sourceTree = "<group>"; };
+		0000000000000000A3000002 /* FolderDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderDetailView.swift; sourceTree = "<group>"; };
+		0000000000000000A3000004 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		0000000000000000A3000006 /* TaskDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskDetailView.swift; sourceTree = "<group>"; };
+		0000000000000000A3000008 /* TaskGraphView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskGraphView.swift; sourceTree = "<group>"; };
+		0000000000000000A300000A /* TodoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodoView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -95,6 +107,11 @@
 		0000000000000000A1000009 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				0000000000000000A300000A /* TodoView.swift */,
+				0000000000000000A3000008 /* TaskGraphView.swift */,
+				0000000000000000A3000006 /* TaskDetailView.swift */,
+				0000000000000000A3000004 /* SettingsView.swift */,
+				0000000000000000A3000002 /* FolderDetailView.swift */,
 				0000000000000000A1000018 /* WorkflowView.swift */,
 				0000000000000000A100001A /* GoalView.swift */,
 				0000000000000000A100001C /* FocusView.swift */,
@@ -116,6 +133,7 @@
 		0000000000000000A2000005 /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				0000000000000000A3000000 /* TodoModel.swift */,
 				0000000000000000A100000E /* WorkflowModel.swift */,
 				0000000000000000A1000010 /* GoalModel.swift */,
 				0000000000000000A1000012 /* TimerModel.swift */,
@@ -189,6 +207,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0000000000000000A300000B /* TodoView.swift in Sources */,
+				0000000000000000A3000009 /* TaskGraphView.swift in Sources */,
+				0000000000000000A3000007 /* TaskDetailView.swift in Sources */,
+				0000000000000000A3000005 /* SettingsView.swift in Sources */,
+				0000000000000000A3000003 /* FolderDetailView.swift in Sources */,
+				0000000000000000A3000001 /* TodoModel.swift in Sources */,
 				0000000000000000A1000003 /* ContentView.swift in Sources */,
 				0000000000000000A1000001 /* LearnFlowAppApp.swift in Sources */,
 				0000000000000000A100000F /* WorkflowModel.swift in Sources */,

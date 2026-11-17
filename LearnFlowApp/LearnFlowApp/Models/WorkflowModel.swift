@@ -75,7 +75,7 @@ struct TimePhase: Identifiable, Codable {
 }
 
 // 待办任务
-struct TodoTask: Identifiable, Codable {
+struct WorkflowTodoTask: Identifiable, Codable {
     let id: UUID
     var nodeName: String
     var duration: Int // 时长（分钟）

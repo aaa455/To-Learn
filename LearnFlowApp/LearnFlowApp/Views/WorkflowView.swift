@@ -85,12 +85,13 @@ struct WorkflowDetailView: View {
                 if isEditing {
                     TextField("名称", text: $editingWorkflowName)
                     TextEditor(text: $editingWorkflowDescription)
-                        .frame(height: 60)
+                        .frame(minHeight: 80)
                 } else {
                     Text(workflow.name)
                         .font(.headline)
                     Text(workflow.description)
                         .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
@@ -128,6 +129,7 @@ struct WorkflowDetailView: View {
                                 Text(node.description)
                                     .font(.caption)
                                     .foregroundColor(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                             Text("时长: \(node.minDuration)-\(node.maxDuration) 分钟")
                                 .font(.caption2)
@@ -265,21 +267,51 @@ struct CreateWorkflowSheet: View {
     @State private var name = ""
     @State private var description = ""
     @State private var nodes: [WorkflowNode] = []
+    @State private var showingAddNode = false
+    @State private var editingNodeIndex: Int?
 
     var body: some View {
         NavigationView {
             Form {
                 Section(header: Text("基本信息")) {
                     TextField("名称", text: $name)
-                    TextField("描述", text: $description)
+                    TextEditor(text: $description)
+                        .frame(minHeight: 60)
                 }
 
-                Section(header: Text("节点")) {
-                    ForEach(nodes) { node in
-                        Text(node.name)
+                Section(header: HStack {
+                    Text("节点")
+                    Spacer()
+                    Button(action: { showingAddNode = true }) {
+                        Image(systemName: "plus.circle.fill")
                     }
-                    Button("添加节点") {
-                        nodes.append(WorkflowNode(name: "新节点", minDuration: 10, maxDuration: 30))
+                }) {
+                    if nodes.isEmpty {
+                        Text("暂无节点，请添加")
+                            .foregroundColor(.secondary)
+                    } else {
+                        ForEach(nodes.indices, id: \.self) { index in
+                            Button(action: {
+                                editingNodeIndex = index
+                            }) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(nodes[index].name)
+                                        .font(.headline)
+                                        .foregroundColor(.primary)
+                                    if !nodes[index].description.isEmpty {
+                                        Text(nodes[index].description)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(2)
+                                    }
+                                    Text("时长: \(nodes[index].minDuration)-\(nodes[index].maxDuration) 分钟")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                                .padding(.vertical, 4)
+                            }
+                        }
+                        .onDelete(perform: deleteNodes)
                     }
                 }
             }
@@ -292,10 +324,45 @@ struct CreateWorkflowSheet: View {
                     dataManager.saveData()
                     isPresented = false
                 }
-                .disabled(name.isEmpty)
+                .disabled(name.isEmpty || nodes.isEmpty)
             )
+            .sheet(isPresented: $showingAddNode) {
+                EditNodeSheet(
+                    node: nil,
+                    workflowId: UUID(),
+                    isPresented: $showingAddNode,
+                    onSave: { newNode in
+                        nodes.append(newNode)
+                    }
+                )
+            }
+            .sheet(item: Binding(
+                get: { editingNodeIndex.map { IdentifiableInt(value: $0) } },
+                set: { editingNodeIndex = $0?.value }
+            )) { indexWrapper in
+                EditNodeSheet(
+                    node: nodes[indexWrapper.value],
+                    workflowId: UUID(),
+                    isPresented: Binding(
+                        get: { editingNodeIndex != nil },
+                        set: { if !$0 { editingNodeIndex = nil } }
+                    ),
+                    onSave: { updatedNode in
+                        nodes[indexWrapper.value] = updatedNode
+                    }
+                )
+            }
         }
     }
+
+    private func deleteNodes(at offsets: IndexSet) {
+        nodes.remove(atOffsets: offsets)
+    }
+}
+
+struct IdentifiableInt: Identifiable {
+    let value: Int
+    var id: Int { value }
 }
 
 struct AIGenerateWorkflowSheet: View {
@@ -309,35 +376,62 @@ struct AIGenerateWorkflowSheet: View {
     var body: some View {
         NavigationView {
             Form {
-                Section(header: Text("AI配置")) {
-                    Picker("提供商", selection: $aiService.currentConfig.provider) {
-                        Text("Claude").tag(AIProvider.claude)
-                        Text("OpenAI").tag(AIProvider.openai)
-                        Text("DeepSeek").tag(AIProvider.deepseek)
-                    }
-
-                    SecureField("API Key", text: $aiService.currentConfig.apiKey)
-                }
-
-                Section(header: Text("学习目标")) {
-                    TextEditor(text: $goal)
-                        .frame(height: 100)
-                }
-
-                if !errorMessage.isEmpty {
+                if aiService.currentConfig.apiKey.isEmpty {
                     Section {
-                        Text(errorMessage)
-                            .foregroundColor(.red)
-                    }
-                }
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundColor(.orange)
+                                Text("请先配置AI")
+                                    .font(.headline)
+                            }
 
-                if isGenerating {
-                    Section {
+                            Text("使用AI生成工作流需要先配置API Key")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            Button(action: {
+                                isPresented = false
+                                // 提示用户去设置页面
+                            }) {
+                                HStack {
+                                    Image(systemName: "gearshape")
+                                    Text("前往设置配置")
+                                }
+                            }
+                        }
+                        .padding(.vertical, 8)
+                    }
+                } else {
+                    Section(header: Text("当前配置")) {
                         HStack {
+                            Text("提供商")
                             Spacer()
-                            ProgressView()
-                            Text("生成中...")
-                            Spacer()
+                            Text(aiService.currentConfig.provider.rawValue)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+
+                    Section(header: Text("学习目标")) {
+                        TextEditor(text: $goal)
+                            .frame(minHeight: 100)
+                    }
+
+                    if !errorMessage.isEmpty {
+                        Section {
+                            Text(errorMessage)
+                                .foregroundColor(.red)
+                        }
+                    }
+
+                    if isGenerating {
+                        Section {
+                            HStack {
+                                Spacer()
+                                ProgressView()
+                                Text("生成中...")
+                                Spacer()
+                            }
                         }
                     }
                 }
@@ -356,7 +450,6 @@ struct AIGenerateWorkflowSheet: View {
     private func generateWorkflow() {
         isGenerating = true
         errorMessage = ""
-        aiService.saveConfig()
 
         aiService.generateWorkflow(goal: goal) { result in
             isGenerating = false
