@@ -198,6 +198,9 @@ struct AIConfigSheet: View {
                 )
             }
             .onDisappear { modelRequestID = UUID() }
+            .onChange(of: apiKey) { _ in invalidateModelRequest() }
+            .onChange(of: baseURL) { _ in invalidateModelRequest() }
+            .onChange(of: isCustomURL) { _ in invalidateModelRequest() }
             .onAppear {
                 models = aiService.getDefaultModels(for: selectedProvider)
                 if selectedModel.isEmpty {
@@ -248,6 +251,12 @@ struct AIConfigSheet: View {
             case .failure(let error): errorMessage = error.localizedDescription
             }
         }
+    }
+
+    private func invalidateModelRequest() {
+        modelRequestID = UUID()
+        isLoadingModels = false
+        models = aiService.getDefaultModels(for: selectedProvider)
     }
 
     private func saveConfig() {
