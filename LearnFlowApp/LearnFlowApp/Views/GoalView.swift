@@ -38,8 +38,12 @@ struct GoalView: View {
     }
 
     private func deleteGoals(at offsets: IndexSet) {
+        let activeGoals = dataManager.goals.filter { $0.isActive }
         for index in offsets {
-            dataManager.goals[index].isActive = false
+            let goalToDelete = activeGoals[index]
+            if let actualIndex = dataManager.goals.firstIndex(where: { $0.id == goalToDelete.id }) {
+                dataManager.goals[actualIndex].isActive = false
+            }
         }
         dataManager.saveData()
     }
@@ -137,7 +141,7 @@ struct TimePlanSheet: View {
     let workflow: Workflow
     @Binding var isPresented: Bool
     @EnvironmentObject var dataManager: DataManager
-    @StateObject private var aiService = AIService()
+    @ObservedObject private var aiService = AIService.shared
     @State private var availableMinutes = 60
     @State private var timePlans: [TimePlan] = []
     @State private var isGenerating = false
@@ -155,7 +159,7 @@ struct TimePlanSheet: View {
                 Section(header: Text("专注设置")) {
                     Toggle("启用应用锁定", isOn: $enableAppBlocking)
                     if enableAppBlocking {
-                        Text("专注期间将限制使用其他应用")
+                        Text("专注期间限制其他应用。锁屏结束后请返回本应用解除限制；此功能需要系统授权。")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -259,6 +263,10 @@ struct TimePlanSheet: View {
     }
 
     private func startFocus(with plan: TimePlan) {
+        guard plan.isExecutable else {
+            errorMessage = "方案无有效阶段，请重新生成。"
+            return
+        }
         var session = FocusSession(goalId: goal.id, timePlan: plan)
         session.isAppBlockingEnabled = enableAppBlocking
 
@@ -284,8 +292,6 @@ struct TimePlanSheet: View {
     }
 
     private func completeSessionStart(_ session: FocusSession) {
-        dataManager.focusSessions.append(session)
-        dataManager.saveData()
         isPresented = false
 
         // 导航到专注视图

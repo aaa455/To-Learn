@@ -1,4 +1,6 @@
 import Foundation
+import Combine
+import Security
 
 // AI服务配置
 enum AIProvider: String, Codable {
@@ -12,17 +14,85 @@ struct AIConfig: Codable {
     var apiKey: String
     var baseURL: String?
     var model: String? // 选择的模型
+    var customBaseURL: Bool // 标记是否是用户自定义的地址
 
     static var claude: AIConfig {
-        AIConfig(provider: .claude, apiKey: "", baseURL: "https://api.anthropic.com", model: "claude-3-5-sonnet-20241022")
+        AIConfig(provider: .claude, apiKey: "", baseURL: "https://api.anthropic.com", model: "claude-3-5-sonnet-20241022", customBaseURL: false)
     }
 
     static var openai: AIConfig {
-        AIConfig(provider: .openai, apiKey: "", baseURL: "https://api.openai.com/v1", model: "gpt-4")
+        AIConfig(provider: .openai, apiKey: "", baseURL: "https://api.openai.com/v1", model: "gpt-4", customBaseURL: false)
     }
 
     static var deepseek: AIConfig {
-        AIConfig(provider: .deepseek, apiKey: "", baseURL: "https://api.deepseek.com", model: "deepseek-chat")
+        AIConfig(provider: .deepseek, apiKey: "", baseURL: "https://api.deepseek.com", model: "deepseek-chat", customBaseURL: false)
+    }
+
+    // 获取默认地址
+    static func defaultBaseURL(for provider: AIProvider) -> String {
+        switch provider {
+        case .claude:
+            return "https://api.anthropic.com"
+        case .openai:
+            return "https://api.openai.com/v1"
+        case .deepseek:
+            return "https://api.deepseek.com"
+        }
+    }
+}
+
+extension AIConfig {
+    private enum LegacyKeys: String, CodingKey { case provider, apiKey, baseURL, model, customBaseURL }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: LegacyKeys.self)
+        provider = try values.decode(AIProvider.self, forKey: .provider)
+        apiKey = try values.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
+        baseURL = try values.decodeIfPresent(String.self, forKey: .baseURL)
+        model = try values.decodeIfPresent(String.self, forKey: .model)
+        let defaultURL = Self.defaultBaseURL(for: provider)
+        customBaseURL = try values.decodeIfPresent(Bool.self, forKey: .customBaseURL)
+            ?? (baseURL.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "/")) != defaultURL } ?? false)
+    }
+
+    var withoutAPIKey: AIConfig {
+        var copy = self
+        copy.apiKey = ""
+        return copy
+    }
+}
+
+private enum APIKeyStore {
+    static var query: [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: "com.learnflow.app.ai",
+         kSecAttrAccount as String: "active-api-key"]
+    }
+
+    static func read() throws -> String? {
+        var request = query
+        request[kSecReturnData as String] = true
+        request[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(request as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess else { throw keychainError(status) }
+        return (result as? Data).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    static func write(_ key: String) throws {
+        let attributes: [String: Any] = [kSecValueData as String: Data(key.utf8),
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
+        var status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            status = SecItemAdd(query.merging(attributes) { _, new in new } as CFDictionary, nil)
+        }
+        guard status == errSecSuccess else { throw keychainError(status) }
+    }
+
+    static func keychainError(_ status: OSStatus) -> Error {
+        NSError(domain: NSOSStatusErrorDomain, code: Int(status),
+            userInfo: [NSLocalizedDescriptionKey: "无法访问安全存储，请解锁设备后重试（\(status)）。"])
     }
 }
 
@@ -37,38 +107,40 @@ struct AIModel: Identifiable, Codable {
     }
 }
 
-// AI服务
+// AI服务（单例模式，全局共享）
 class AIService: ObservableObject {
-    @Published var currentConfig: AIConfig
-    @Published var availableModels: [AIModel] = []
-    @Published var isLoadingModels = false
+    static let shared = AIService()
 
-    init() {
-        // 从UserDefaults加载配置
-        if let data = UserDefaults.standard.data(forKey: "aiConfig"),
-           let config = try? JSONDecoder().decode(AIConfig.self, from: data) {
-            self.currentConfig = config
-        } else {
-            self.currentConfig = .claude
-        }
+    @Published private(set) var currentConfig: AIConfig = .claude
+    @Published private(set) var availableModels: [AIModel] = []
+    @Published private(set) var configurationError: String?
 
-        // 加载默认模型列表
-        loadDefaultModels()
-    }
-
-    func saveConfig() {
-        if let encoded = try? JSONEncoder().encode(currentConfig) {
-            UserDefaults.standard.set(encoded, forKey: "aiConfig")
-        }
-    }
-
-    // 加载默认模型列表
-    func loadDefaultModels() {
+    private init() {
+        do {
+            if let data = UserDefaults.standard.data(forKey: "aiConfig") {
+                currentConfig = try JSONDecoder().decode(AIConfig.self, from: data)
+            }
+            if currentConfig.apiKey.isEmpty {
+                currentConfig.apiKey = try APIKeyStore.read() ?? ""
+            } else {
+                // Retain the legacy configuration if secure storage fails.
+                try saveConfig(currentConfig)
+            }
+        } catch { configurationError = error.localizedDescription }
         availableModels = getDefaultModels(for: currentConfig.provider)
     }
 
+    func saveConfig(_ config: AIConfig) throws {
+        let encoded = try JSONEncoder().encode(config.withoutAPIKey)
+        try APIKeyStore.write(config.apiKey)
+        UserDefaults.standard.set(encoded, forKey: "aiConfig")
+        currentConfig = config
+        availableModels = getDefaultModels(for: config.provider)
+        configurationError = nil
+    }
+
     // 获取默认模型列表
-    private func getDefaultModels(for provider: AIProvider) -> [AIModel] {
+    func getDefaultModels(for provider: AIProvider) -> [AIModel] {
         switch provider {
         case .claude:
             return [
@@ -94,101 +166,34 @@ class AIService: ObservableObject {
         }
     }
 
-    // 从API获取模型列表
-    func fetchModels(completion: @escaping (Result<[AIModel], Error>) -> Void) {
-        guard !currentConfig.apiKey.isEmpty else {
-            completion(.failure(NSError(domain: "AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: "请先配置API Key"])))
+    // Draft requests never modify the saved or live configuration.
+    func fetchModels(config: AIConfig, completion: @escaping (Result<[AIModel], Error>) -> Void) {
+        guard !config.apiKey.isEmpty else {
+            completion(.failure(Self.error("请先配置API Key")))
             return
         }
-
-        isLoadingModels = true
-
-        switch currentConfig.provider {
-        case .claude:
-            fetchClaudeModels(completion: completion)
-        case .openai:
-            fetchOpenAIModels(completion: completion)
-        case .deepseek:
-            fetchDeepSeekModels(completion: completion)
-        }
-    }
-
-    private func fetchClaudeModels(completion: @escaping (Result<[AIModel], Error>) -> Void) {
-        // Claude API 没有列出模型的端点，使用默认列表
-        DispatchQueue.main.async {
-            self.isLoadingModels = false
-            self.availableModels = self.getDefaultModels(for: .claude)
-            completion(.success(self.availableModels))
-        }
-    }
-
-    private func fetchOpenAIModels(completion: @escaping (Result<[AIModel], Error>) -> Void) {
-        guard let url = URL(string: "\(currentConfig.baseURL ?? "https://api.openai.com/v1")/models") else {
-            completion(.failure(NSError(domain: "AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: "无效的API地址"])))
+        guard config.provider == .openai else {
+            completion(.success(getDefaultModels(for: config.provider)))
             return
         }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(currentConfig.apiKey)", forHTTPHeaderField: "Authorization")
-
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            guard let self = self else { return }
-
-            DispatchQueue.main.async {
-                self.isLoadingModels = false
-            }
-
-            if let error = error {
-                DispatchQueue.main.async {
-                    completion(.failure(error))
+        guard let url = Self.endpoint(config: config, path: "models") else {
+            completion(.failure(Self.error("请输入有效的 HTTPS API 地址")))
+            return
+        }
+        var request = URLRequest(url: url, timeoutInterval: 30)
+        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        Self.send(request) { result in
+            completion(result.flatMap { data in
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let list = json["data"] as? [[String: Any]] else {
+                    return .failure(Self.error("模型列表响应格式错误"))
                 }
-                return
-            }
-
-            guard let data = data else {
-                DispatchQueue.main.async {
-                    completion(.failure(NSError(domain: "AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: "无响应数据"])))
+                let models = list.compactMap { item -> AIModel? in
+                    guard let id = item["id"] as? String, !id.isEmpty else { return nil }
+                    return AIModel(id: id, name: id, provider: config.provider)
                 }
-                return
-            }
-
-            do {
-                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let modelsArray = json["data"] as? [[String: Any]] {
-                    let models = modelsArray.compactMap { modelData -> AIModel? in
-                        guard let id = modelData["id"] as? String else { return nil }
-                        // 只返回 GPT 模型
-                        if id.hasPrefix("gpt") {
-                            return AIModel(id: id, name: id, provider: .openai)
-                        }
-                        return nil
-                    }
-
-                    DispatchQueue.main.async {
-                        self.availableModels = models.isEmpty ? self.getDefaultModels(for: .openai) : models
-                        completion(.success(self.availableModels))
-                    }
-                } else {
-                    DispatchQueue.main.async {
-                        self.availableModels = self.getDefaultModels(for: .openai)
-                        completion(.success(self.availableModels))
-                    }
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    completion(.failure(error))
-                }
-            }
-        }.resume()
-    }
-
-    private func fetchDeepSeekModels(completion: @escaping (Result<[AIModel], Error>) -> Void) {
-        // DeepSeek 使用默认模型列表
-        DispatchQueue.main.async {
-            self.isLoadingModels = false
-            self.availableModels = self.getDefaultModels(for: .deepseek)
-            completion(.success(self.availableModels))
+                return .success(models)
+            })
         }
     }
 
@@ -199,7 +204,7 @@ class AIService: ObservableObject {
             switch result {
             case .success(let response):
                 // 解析AI响应，构建工作流
-                if let workflow = self.parseWorkflowFromResponse(response, goal: goal) {
+                if let workflow = Self.parseWorkflowFromResponse(response, goal: goal) {
                     completion(.success(workflow))
                 } else {
                     completion(.failure(NSError(domain: "AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: "无法解析工作流"])))
@@ -217,178 +222,82 @@ class AIService: ObservableObject {
             switch result {
             case .success(let response):
                 // 解析AI响应，生成多个时间方案
-                let plans = self.parseTimePlansFromResponse(response, workflow: workflow, availableMinutes: availableMinutes)
-                completion(.success(plans))
+                let plans = Self.parseTimePlansFromResponse(response, workflow: workflow, availableMinutes: availableMinutes)
+                if plans.isEmpty {
+                    completion(.failure(Self.error("AI 返回的方案无效，请重新生成。")))
+                } else {
+                    completion(.success(plans))
+                }
             case .failure(let error):
                 completion(.failure(error))
             }
         }
     }
 
-    // AI调用核心方法
+    private static func error(_ message: String) -> Error {
+        NSError(domain: "AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
+    static func endpoint(config: AIConfig, path: String) -> URL? {
+        let base = (config.baseURL ?? AIConfig.defaultBaseURL(for: config.provider))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var url = URL(string: base), url.scheme?.lowercased() == "https",
+              url.host != nil, url.user == nil, url.password == nil,
+              url.query == nil, url.fragment == nil else { return nil }
+        for part in path.split(separator: "/") { url.appendPathComponent(String(part)) }
+        return url
+    }
+
+    private static func send(_ request: URLRequest, completion: @escaping (Result<Data, Error>) -> Void) {
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            let result: Result<Data, Error>
+            if let error = error { result = .failure(error) }
+            else if let response = response as? HTTPURLResponse, !(200...299).contains(response.statusCode) {
+                result = .failure(Self.error("API 请求失败（HTTP \(response.statusCode)），请检查地址、Key 和模型。"))
+            } else if let data = data { result = .success(data) }
+            else { result = .failure(Self.error("无响应数据")) }
+            DispatchQueue.main.async { completion(result) }
+        }.resume()
+    }
+
     private func callAI(prompt: String, completion: @escaping (Result<String, Error>) -> Void) {
-        guard !currentConfig.apiKey.isEmpty else {
-            completion(.failure(NSError(domain: "AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: "请先配置API Key"])))
+        let config = currentConfig
+        guard !config.apiKey.isEmpty else {
+            completion(.failure(Self.error("请先配置API Key")))
             return
         }
-
-        switch currentConfig.provider {
-        case .claude:
-            callClaude(prompt: prompt, completion: completion)
-        case .openai:
-            callOpenAI(prompt: prompt, completion: completion)
-        case .deepseek:
-            callDeepSeek(prompt: prompt, completion: completion)
-        }
-    }
-
-    // Claude API调用
-    private func callClaude(prompt: String, completion: @escaping (Result<String, Error>) -> Void) {
-        guard let url = URL(string: "\(currentConfig.baseURL ?? "https://api.anthropic.com")/v1/messages") else {
-            completion(.failure(NSError(domain: "AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: "无效的API地址"])))
+        let isClaude = config.provider == .claude
+        guard let url = Self.endpoint(config: config, path: isClaude ? "v1/messages" : "chat/completions") else {
+            completion(.failure(Self.error("请输入有效的 HTTPS API 地址")))
             return
         }
-
-        var request = URLRequest(url: url)
+        var request = URLRequest(url: url, timeoutInterval: 90)
         request.httpMethod = "POST"
-        request.setValue(currentConfig.apiKey, forHTTPHeaderField: "x-api-key")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-
-        let body: [String: Any] = [
-            "model": currentConfig.model ?? "claude-3-5-sonnet-20241022",
-            "max_tokens": 4096,
-            "messages": [
-                ["role": "user", "content": prompt]
-            ]
-        ]
-
+        if isClaude {
+            request.setValue(config.apiKey, forHTTPHeaderField: "x-api-key")
+            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        } else { request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization") }
+        let defaultModel = getDefaultModels(for: config.provider).first?.id ?? ""
+        var body: [String: Any] = ["model": config.model ?? defaultModel,
+            "messages": [["role": "user", "content": prompt]]]
+        if isClaude { body["max_tokens"] = 4096 }
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-
-        URLSession.shared.dataTask(with: request) { data, response, error in
-            if let error = error {
-                completion(.failure(error))
-                return
-            }
-
-            guard let data = data else {
-                completion(.failure(NSError(domain: "AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: "无响应数据"])))
-                return
-            }
-
-            do {
-                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let content = json["content"] as? [[String: Any]],
-                   let text = content.first?["text"] as? String {
-                    DispatchQueue.main.async {
-                        completion(.success(text))
-                    }
-                } else {
-                    completion(.failure(NSError(domain: "AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: "响应格式错误"])))
+        Self.send(request) { result in
+            completion(result.flatMap { data in
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    return .failure(Self.error("响应格式错误"))
                 }
-            } catch {
-                completion(.failure(error))
-            }
-        }.resume()
-    }
-
-    // OpenAI API调用
-    private func callOpenAI(prompt: String, completion: @escaping (Result<String, Error>) -> Void) {
-        guard let url = URL(string: "\(currentConfig.baseURL ?? "https://api.openai.com/v1")/chat/completions") else {
-            completion(.failure(NSError(domain: "AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: "无效的API地址"])))
-            return
+                let text: String?
+                if isClaude {
+                    text = (json["content"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined(separator: "\n")
+                } else {
+                    text = ((json["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any])?["content"] as? String
+                }
+                guard let text = text, !text.isEmpty else { return .failure(Self.error("AI 返回了空内容")) }
+                return .success(text)
+            })
         }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(currentConfig.apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let body: [String: Any] = [
-            "model": currentConfig.model ?? "gpt-4",
-            "messages": [
-                ["role": "user", "content": prompt]
-            ]
-        ]
-
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-
-        URLSession.shared.dataTask(with: request) { data, response, error in
-            if let error = error {
-                completion(.failure(error))
-                return
-            }
-
-            guard let data = data else {
-                completion(.failure(NSError(domain: "AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: "无响应数据"])))
-                return
-            }
-
-            do {
-                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let choices = json["choices"] as? [[String: Any]],
-                   let message = choices.first?["message"] as? [String: Any],
-                   let content = message["content"] as? String {
-                    DispatchQueue.main.async {
-                        completion(.success(content))
-                    }
-                } else {
-                    completion(.failure(NSError(domain: "AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: "响应格式错误"])))
-                }
-            } catch {
-                completion(.failure(error))
-            }
-        }.resume()
-    }
-
-    // DeepSeek API调用
-    private func callDeepSeek(prompt: String, completion: @escaping (Result<String, Error>) -> Void) {
-        // DeepSeek使用OpenAI兼容格式
-        guard let url = URL(string: "\(currentConfig.baseURL ?? "https://api.deepseek.com")/chat/completions") else {
-            completion(.failure(NSError(domain: "AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: "无效的API地址"])))
-            return
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(currentConfig.apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let body: [String: Any] = [
-            "model": currentConfig.model ?? "deepseek-chat",
-            "messages": [
-                ["role": "user", "content": prompt]
-            ]
-        ]
-
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-
-        URLSession.shared.dataTask(with: request) { data, response, error in
-            if let error = error {
-                completion(.failure(error))
-                return
-            }
-
-            guard let data = data else {
-                completion(.failure(NSError(domain: "AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: "无响应数据"])))
-                return
-            }
-
-            do {
-                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let choices = json["choices"] as? [[String: Any]],
-                   let message = choices.first?["message"] as? [String: Any],
-                   let content = message["content"] as? String {
-                    DispatchQueue.main.async {
-                        completion(.success(content))
-                    }
-                } else {
-                    completion(.failure(NSError(domain: "AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: "响应格式错误"])))
-                }
-            } catch {
-                completion(.failure(error))
-            }
-        }.resume()
     }
 
     // 生成工作流提示词
@@ -492,7 +401,7 @@ class AIService: ObservableObject {
     }
 
     // 解析工作流
-    private func parseWorkflowFromResponse(_ response: String, goal: String) -> Workflow? {
+    static func parseWorkflowFromResponse(_ response: String, goal: String) -> Workflow? {
         // 提取JSON部分
         guard let jsonString = extractJSON(from: response),
               let data = jsonString.data(using: .utf8),
@@ -504,10 +413,14 @@ class AIService: ObservableObject {
         let description = json["description"] as? String ?? ""
         let nodesArray = json["nodes"] as? [[String: Any]] ?? []
 
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              (1...64).contains(nodesArray.count) else { return nil }
         let nodes = nodesArray.compactMap { nodeData -> WorkflowNode? in
             guard let name = nodeData["name"] as? String,
                   let minDuration = nodeData["minDuration"] as? Int,
-                  let maxDuration = nodeData["maxDuration"] as? Int else {
+                  let maxDuration = nodeData["maxDuration"] as? Int,
+                  !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  (1...120).contains(minDuration), (minDuration...180).contains(maxDuration) else {
                 return nil
             }
 
@@ -520,11 +433,13 @@ class AIService: ObservableObject {
             )
         }
 
+        guard nodes.count == nodesArray.count,
+              Set(nodes.map(\.name)).count == nodes.count else { return nil }
         return Workflow(name: name, description: description, nodes: nodes)
     }
 
     // 解析时间计划
-    private func parseTimePlansFromResponse(_ response: String, workflow: Workflow, availableMinutes: Int) -> [TimePlan] {
+    static func parseTimePlansFromResponse(_ response: String, workflow: Workflow, availableMinutes: Int) -> [TimePlan] {
         // 提取JSON部分
         guard let jsonString = extractJSON(from: response),
               let data = jsonString.data(using: .utf8),
@@ -536,24 +451,34 @@ class AIService: ObservableObject {
         return plansArray.compactMap { planData -> TimePlan? in
             let phasesArray = planData["phases"] as? [[String: Any]] ?? []
 
+            guard (1...64).contains(phasesArray.count) else { return nil }
             let phases = phasesArray.compactMap { phaseData -> TimePhase? in
                 guard let nodeName = phaseData["nodeName"] as? String,
                       let duration = phaseData["duration"] as? Int,
-                      let order = phaseData["order"] as? Int else {
+                      let order = phaseData["order"] as? Int,
+                      (1...180).contains(duration), order >= 0,
+                      let node = workflow.nodes.first(where: { $0.name == nodeName }),
+                      duration >= node.minDuration, duration <= node.maxDuration else {
                     return nil
                 }
                 let isTodo = phaseData["isTodo"] as? Bool ?? false
                 return TimePhase(nodeName: nodeName, duration: duration, order: order, isTodo: isTodo)
             }
 
-            let totalDuration = planData["totalDuration"] as? Int ?? phases.reduce(0) { $0 + $1.duration }
-
-            return TimePlan(phases: phases, totalDuration: totalDuration)
+            guard phases.count == phasesArray.count else { return nil }
+            let totalDuration = phases.reduce(0) { $0 + $1.duration }
+            guard totalDuration <= availableMinutes,
+                  (planData["totalDuration"] as? Int ?? totalDuration) == totalDuration else { return nil }
+            for node in workflow.nodes where !node.isRepeatable {
+                guard phases.filter({ $0.nodeName == node.name }).count <= 1 else { return nil }
+            }
+            let plan = TimePlan(phases: phases.sorted { $0.order < $1.order }, totalDuration: totalDuration)
+            return plan.isExecutable ? plan : nil
         }
     }
 
     // 提取JSON字符串
-    private func extractJSON(from text: String) -> String? {
+    private static func extractJSON(from text: String) -> String? {
         // 尝试提取```json```代码块
         if let range = text.range(of: "```json\\s*(.+?)```", options: .regularExpression) {
             let jsonText = text[range]
@@ -565,7 +490,7 @@ class AIService: ObservableObject {
 
         // 尝试直接查找JSON对象
         if let start = text.firstIndex(of: "{"),
-           let end = text.lastIndex(of: "}") {
+           let end = text.lastIndex(of: "}"), start <= end {
             return String(text[start...end])
         }
 

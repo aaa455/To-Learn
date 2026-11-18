@@ -2,7 +2,7 @@ import SwiftUI
 
 struct WorkflowView: View {
     @EnvironmentObject var dataManager: DataManager
-    @StateObject private var aiService = AIService()
+    @ObservedObject var aiService = AIService.shared
     @State private var showingCreateSheet = false
     @State private var showingAISheet = false
     @State private var newWorkflowName = ""
@@ -214,8 +214,9 @@ struct EditNodeSheet: View {
 
         _name = State(initialValue: node?.name ?? "")
         _description = State(initialValue: node?.description ?? "")
-        _minDuration = State(initialValue: node?.minDuration ?? 10)
-        _maxDuration = State(initialValue: node?.maxDuration ?? 30)
+        let minimum = min(120, max(1, node?.minDuration ?? 10))
+        _minDuration = State(initialValue: minimum)
+        _maxDuration = State(initialValue: min(180, max(minimum, node?.maxDuration ?? 30)))
         _isRepeatable = State(initialValue: node?.isRepeatable ?? false)
     }
 
@@ -233,6 +234,7 @@ struct EditNodeSheet: View {
 
                 Section(header: Text("时长范围（分钟）")) {
                     Stepper("最小: \(minDuration) 分钟", value: $minDuration, in: 1...120, step: 5)
+                        .onChange(of: minDuration) { maxDuration = max(maxDuration, $0) }
                     Stepper("最大: \(maxDuration) 分钟", value: $maxDuration, in: minDuration...180, step: 5)
                 }
 

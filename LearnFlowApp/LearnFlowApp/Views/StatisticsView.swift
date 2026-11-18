@@ -14,9 +14,7 @@ struct StatisticsView: View {
     }
 
     var totalFocusMinutes: Int {
-        completedSessions.reduce(0) { total, session in
-            total + session.timePlan.totalDuration
-        }
+        completedSessions.reduce(0) { $0 + $1.actualDuration } / 60
     }
 
     var todayMinutes: Int {
@@ -29,7 +27,7 @@ struct StatisticsView: View {
                 }
                 return false
             }
-            .reduce(0) { $0 + $1.timePlan.totalDuration }
+            .reduce(0) { $0 + $1.actualDuration } / 60
     }
 
     var periodData: [(Date, Int)] {
@@ -49,7 +47,7 @@ struct StatisticsView: View {
                         }
                         return false
                     }
-                    .reduce(0) { $0 + $1.timePlan.totalDuration }
+                    .reduce(0) { $0 + $1.actualDuration } / 60
 
                 data.append((dayStart, minutes))
             }

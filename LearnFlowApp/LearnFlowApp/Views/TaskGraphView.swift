@@ -3,9 +3,12 @@ import SwiftUI
 struct TaskGraphView: View {
     @ObservedObject var todoManager: TodoManager
     let folderId: UUID?
+    var showAllTasks: Bool = false
 
     var tasksInFolder: [TodoTask] {
-        if let folderId = folderId {
+        if showAllTasks {
+            return todoManager.tasks
+        } else if let folderId = folderId {
             return todoManager.tasks.filter { $0.folderId == folderId }
         } else {
             return todoManager.tasks.filter { $0.folderId == nil }

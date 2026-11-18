@@ -53,7 +53,13 @@ struct TimePlan: Identifiable, Codable {
     }
 
     var activePhases: [TimePhase] {
-        phases.filter { !$0.isTodo }
+        phases.sorted { $0.order < $1.order }
+    }
+
+    var isExecutable: Bool {
+        !phases.isEmpty && phases.count <= 64 &&
+        phases.allSatisfy { (1...180).contains($0.duration) && !$0.nodeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } &&
+        activePhases.map(\.order) == Array(0..<phases.count)
     }
 }
 

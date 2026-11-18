@@ -1,9 +1,10 @@
 import SwiftUI
 
 struct FocusView: View {
-    let session: FocusSession
+    let initialSession: FocusSession
+    var session: FocusSession { timerManager.currentSession ?? initialSession }
     @EnvironmentObject var dataManager: DataManager
-    @StateObject private var timerManager = TimerManager()
+    @ObservedObject var timerManager: TimerManager
     @State private var showingEndConfirmation = false
     @State private var showingSkipConfirmation = false
 
@@ -212,11 +213,6 @@ struct FocusView: View {
                     .font(.headline)
             }
         }
-        .onAppear {
-            if timerManager.currentSession == nil {
-                timerManager.startTimer(session: session)
-            }
-        }
         .alert("确认结束", isPresented: $showingEndConfirmation) {
             Button("取消", role: .cancel) { }
             Button("结束", role: .destructive) {
@@ -237,59 +233,5 @@ struct FocusView: View {
 
     private func endSession() {
         timerManager.stopTimer()
-        // 更新会话状态
-        if let index = dataManager.focusSessions.firstIndex(where: { $0.id == session.id }) {
-            dataManager.focusSessions[index].status = .completed
-            dataManager.focusSessions[index].endTime = Date()
-            dataManager.saveData()
-        }
-    }
-}
-
-struct ActiveFocusView: View {
-    @EnvironmentObject var dataManager: DataManager
-    @State private var currentSessionId: UUID?
-
-    var currentSession: FocusSession? {
-        guard let id = currentSessionId else { return nil }
-        return dataManager.focusSessions.first(where: { $0.id == id && $0.status != .completed })
-    }
-
-    var body: some View {
-        Group {
-            if let session = currentSession {
-                FocusView(session: session)
-            } else {
-                ZStack {
-                    LinearGradient(
-                        colors: [Color.blue.opacity(0.1), Color.purple.opacity(0.1)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                    .ignoresSafeArea()
-
-                    VStack(spacing: 24) {
-                        Image(systemName: "timer")
-                            .font(.system(size: 80))
-                            .foregroundColor(.blue.opacity(0.5))
-
-                        VStack(spacing: 8) {
-                            Text("暂无进行中的专注")
-                                .font(.title3)
-                                .fontWeight(.medium)
-
-                            Text("创建目标并开始专注")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("StartFocusSession"))) { notification in
-            if let session = notification.object as? FocusSession {
-                currentSessionId = session.id
-            }
-        }
     }
 }

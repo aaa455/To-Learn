@@ -29,12 +29,10 @@ class ScreenTimeManager: ObservableObject {
     }
 
     // 请求授权
-    func requestAuthorization() async throws {
+    @MainActor func requestAuthorization() async throws {
         do {
             try await authorizationCenter.requestAuthorization(for: .individual)
-            DispatchQueue.main.async {
-                self.isAuthorized = true
-            }
+            checkAuthorization()
         } catch {
             throw error
         }
@@ -42,6 +40,7 @@ class ScreenTimeManager: ObservableObject {
 
     // 开始屏蔽应用（专注模式）
     func startBlocking(allowedApps: Set<ApplicationToken> = []) {
+        checkAuthorization()
         guard isAuthorized else { return }
 
         // 屏蔽所有应用，除了白名单
@@ -52,7 +51,7 @@ class ScreenTimeManager: ObservableObject {
             // 注意：FamilyControls需要反向逻辑，我们设置shield来屏蔽
             // 这里需要获取所有应用，然后排除白名单
             // 由于API限制，我们简化为全屏蔽模式
-            managedSettingsStore.shield.applicationCategories = .all()
+            managedSettingsStore.shield.applicationCategories = .all(except: allowedApps)
         } else {
             // 屏蔽所有应用
             managedSettingsStore.shield.applicationCategories = .all()

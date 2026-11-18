@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @StateObject private var aiService = AIService()
+    @ObservedObject var aiService = AIService.shared
     @State private var showingAPIConfig = false
 
     var body: some View {
@@ -42,7 +42,7 @@ struct SettingsView: View {
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 } else {
-                                    Text("未选择")
+                                    Text(aiService.currentConfig.model ?? "未选择")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
@@ -52,11 +52,15 @@ struct SettingsView: View {
                     }
                 }
 
+                if let error = aiService.configurationError {
+                    Section { Text(error).foregroundColor(.red) }
+                }
+
                 Section(header: Text("关于")) {
                     HStack {
                         Text("版本")
                         Spacer()
-                        Text("1.0.0")
+                        Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.1")
                             .foregroundColor(.secondary)
                     }
 
@@ -84,19 +88,29 @@ struct AIConfigSheet: View {
     @State private var baseURL: String
     @State private var selectedModel: String
     @State private var showingModelPicker = false
+    @State private var isCustomURL: Bool
+    @State private var models: [AIModel] = []
+    @State private var isLoadingModels = false
+    @State private var errorMessage = ""
+    @State private var modelRequestID = UUID()
 
     init(aiService: AIService, isPresented: Binding<Bool>) {
         self.aiService = aiService
         self._isPresented = isPresented
         _selectedProvider = State(initialValue: aiService.currentConfig.provider)
         _apiKey = State(initialValue: aiService.currentConfig.apiKey)
-        _baseURL = State(initialValue: aiService.currentConfig.baseURL ?? "")
+        // 不自动填充baseURL，只在customBaseURL为true时填充
+        _baseURL = State(initialValue: aiService.currentConfig.customBaseURL ? (aiService.currentConfig.baseURL ?? "") : "")
         _selectedModel = State(initialValue: aiService.currentConfig.model ?? "")
+        _isCustomURL = State(initialValue: aiService.currentConfig.customBaseURL)
     }
 
     var body: some View {
         NavigationView {
             Form {
+                if !errorMessage.isEmpty {
+                    Section { Text(errorMessage).foregroundColor(.red) }
+                }
                 Section(header: Text("AI提供商")) {
                     Picker("提供商", selection: $selectedProvider) {
                         Text("Claude").tag(AIProvider.claude)
@@ -105,17 +119,18 @@ struct AIConfigSheet: View {
                     }
                     .pickerStyle(.segmented)
                     .onChange(of: selectedProvider) { newProvider in
-                        // 切换提供商时更新模型列表
-                        aiService.currentConfig.provider = newProvider
-                        aiService.loadDefaultModels()
-                        // 选择默认模型
-                        if let firstModel = aiService.availableModels.first {
-                            selectedModel = firstModel.id
+                        // 切换提供商时更新默认地址（如果不是自定义地址）
+                        if !isCustomURL {
+                            baseURL = ""
                         }
+                        modelRequestID = UUID()
+                        isLoadingModels = false
+                        models = aiService.getDefaultModels(for: newProvider)
+                        selectedModel = models.first?.id ?? ""
                     }
                 }
 
-                Section(header: Text("API Key"), footer: Text("你的API Key将安全地存储在本地")) {
+                Section(header: Text("API Key"), footer: Text("API Key 保存在本机钥匙串中")) {
                     SecureField("输入API Key", text: $apiKey)
                 }
 
@@ -143,7 +158,7 @@ struct AIConfigSheet: View {
                     }
                     .foregroundColor(.primary)
 
-                    if aiService.isLoadingModels {
+                    if isLoadingModels {
                         HStack {
                             Spacer()
                             ProgressView()
@@ -156,9 +171,13 @@ struct AIConfigSheet: View {
                 }
 
                 Section(header: Text("API地址（可选）"), footer: Text(defaultURLText)) {
-                    TextField("自定义API地址", text: $baseURL)
-                        .autocapitalization(.none)
-                        .keyboardType(.URL)
+                    Toggle("使用自定义地址", isOn: $isCustomURL)
+
+                    if isCustomURL {
+                        TextField("自定义API地址", text: $baseURL)
+                            .autocapitalization(.none)
+                            .keyboardType(.URL)
+                    }
                 }
             }
             .navigationTitle("AI配置")
@@ -173,14 +192,16 @@ struct AIConfigSheet: View {
             )
             .sheet(isPresented: $showingModelPicker) {
                 ModelPickerSheet(
-                    models: aiService.availableModels,
+                    models: models,
                     selectedModel: $selectedModel,
                     isPresented: $showingModelPicker
                 )
             }
+            .onDisappear { modelRequestID = UUID() }
             .onAppear {
+                models = aiService.getDefaultModels(for: selectedProvider)
                 if selectedModel.isEmpty {
-                    if let firstModel = aiService.availableModels.first {
+                    if let firstModel = models.first {
                         selectedModel = firstModel.id
                     }
                 }
@@ -200,43 +221,49 @@ struct AIConfigSheet: View {
     }
 
     private func getModelDisplayName(_ modelId: String) -> String {
-        if let model = aiService.availableModels.first(where: { $0.id == modelId }) {
+        if let model = models.first(where: { $0.id == modelId }) {
             return model.displayName
         }
         return modelId
     }
 
-    private func fetchModels() {
-        // 临时更新配置用于获取模型
-        let tempConfig = aiService.currentConfig
-        aiService.currentConfig.provider = selectedProvider
-        aiService.currentConfig.apiKey = apiKey
-        aiService.currentConfig.baseURL = baseURL.isEmpty ? nil : baseURL
+    private var draftConfig: AIConfig {
+        AIConfig(provider: selectedProvider, apiKey: apiKey.trimmingCharacters(in: .whitespacesAndNewlines),
+            baseURL: isCustomURL ? baseURL.trimmingCharacters(in: .whitespacesAndNewlines) : AIConfig.defaultBaseURL(for: selectedProvider),
+            model: selectedModel, customBaseURL: isCustomURL)
+    }
 
-        aiService.fetchModels { result in
+    private func fetchModels() {
+        let requestID = UUID()
+        modelRequestID = requestID
+        isLoadingModels = true
+        errorMessage = ""
+        aiService.fetchModels(config: draftConfig) { result in
+            guard modelRequestID == requestID else { return }
+            isLoadingModels = false
             switch result {
-            case .success(let models):
-                if !models.isEmpty && selectedModel.isEmpty {
-                    selectedModel = models[0].id
-                }
-            case .failure:
-                // 使用默认模型列表
-                break
+            case .success(let fetched):
+                if !fetched.isEmpty { models = fetched }
+                if selectedModel.isEmpty { selectedModel = models.first?.id ?? "" }
+            case .failure(let error): errorMessage = error.localizedDescription
             }
         }
-
-        // 恢复原配置
-        aiService.currentConfig = tempConfig
     }
 
     private func saveConfig() {
-        aiService.currentConfig.provider = selectedProvider
-        aiService.currentConfig.apiKey = apiKey
-        aiService.currentConfig.baseURL = baseURL.isEmpty ? nil : baseURL
-        aiService.currentConfig.model = selectedModel
-        aiService.saveConfig()
-        isPresented = false
+        let config = draftConfig
+        guard !config.apiKey.isEmpty,
+              AIService.endpoint(config: config, path: "models") != nil else {
+            errorMessage = "请填写 API Key 和有效的 HTTPS API 地址。"
+            return
+        }
+        do {
+            try aiService.saveConfig(config)
+            modelRequestID = UUID()
+            isPresented = false
+        } catch { errorMessage = error.localizedDescription }
     }
+
 }
 
 struct ModelPickerSheet: View {

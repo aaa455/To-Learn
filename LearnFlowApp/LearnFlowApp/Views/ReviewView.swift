@@ -11,7 +11,7 @@ struct ReviewView: View {
     var upcomingReviews: [ReviewCard] {
         dataManager.reviewCards.filter { card in
             if let nextDate = EbbinghausManager.getNextReviewDate(for: card) {
-                return nextDate > Date()
+                return !EbbinghausManager.isDue(nextDate)
             }
             return false
         }
@@ -156,7 +156,7 @@ struct ReviewCardDetailSheet: View {
                     }
 
                     if let nextDate = EbbinghausManager.getNextReviewDate(for: card),
-                       Calendar.current.isDate(nextDate, inSameDayAs: Date()) {
+                       EbbinghausManager.isDue(nextDate) {
                         Button(action: markAsReviewed) {
                             HStack {
                                 Spacer()
@@ -198,7 +198,7 @@ struct ReviewCardDetailSheet: View {
 
     private func markAsReviewed() {
         if let index = dataManager.reviewCards.firstIndex(where: { $0.id == card.id }) {
-            dataManager.reviewCards[index].completedReviews.append(Date())
+            guard dataManager.reviewCards[index].completeNextReview() else { return }
             dataManager.saveData()
             isPresented = false
         }

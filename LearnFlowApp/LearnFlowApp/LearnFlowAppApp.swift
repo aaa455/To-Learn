@@ -12,57 +12,55 @@ struct LearnFlowAppApp: App {
     }
 }
 
-// 数据管理器
+// Decode failures retain the original bytes and block overwriting that collection.
 class DataManager: ObservableObject {
     static let shared = DataManager()
-
     @Published var workflows: [Workflow] = []
     @Published var goals: [Goal] = []
     @Published var focusSessions: [FocusSession] = []
     @Published var reviewCards: [ReviewCard] = []
+    @Published private(set) var persistenceError: String?
+    private let defaults: UserDefaults
+    private var unreadableKeys = Set<String>()
 
-    private init() {
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         loadData()
     }
 
-    func loadData() {
-        // 从UserDefaults加载数据
-        if let workflowsData = UserDefaults.standard.data(forKey: "workflows"),
-           let decoded = try? JSONDecoder().decode([Workflow].self, from: workflowsData) {
-            workflows = decoded
-        }
-
-        if let goalsData = UserDefaults.standard.data(forKey: "goals"),
-           let decoded = try? JSONDecoder().decode([Goal].self, from: goalsData) {
-            goals = decoded
-        }
-
-        if let sessionsData = UserDefaults.standard.data(forKey: "focusSessions"),
-           let decoded = try? JSONDecoder().decode([FocusSession].self, from: sessionsData) {
-            focusSessions = decoded
-        }
-
-        if let reviewData = UserDefaults.standard.data(forKey: "reviewCards"),
-           let decoded = try? JSONDecoder().decode([ReviewCard].self, from: reviewData) {
-            reviewCards = decoded
+    private func load<T: Decodable>(_ type: T.Type, key: String) -> T? {
+        guard let data = defaults.data(forKey: key) else { return nil }
+        do {
+            let value = try JSONDecoder().decode(type, from: data)
+            unreadableKeys.remove(key)
+            return value
+        } catch {
+            unreadableKeys.insert(key)
+            if defaults.data(forKey: key + ".recoveryBackup") == nil {
+                defaults.set(data, forKey: key + ".recoveryBackup")
+            }
+            persistenceError = "部分历史数据无法读取，已保留原始备份。该部分新修改暂不能保存，请先恢复数据。"
+            return nil
         }
     }
 
+    func loadData() {
+        workflows = load([Workflow].self, key: "workflows") ?? workflows
+        goals = load([Goal].self, key: "goals") ?? goals
+        focusSessions = load([FocusSession].self, key: "focusSessions") ?? focusSessions
+        reviewCards = load([ReviewCard].self, key: "reviewCards") ?? reviewCards
+    }
+
+    private func save<T: Encodable>(_ value: T, key: String) {
+        guard !unreadableKeys.contains(key) else { return }
+        do { defaults.set(try JSONEncoder().encode(value), forKey: key) }
+        catch { persistenceError = "保存失败，请重试：\(error.localizedDescription)" }
+    }
+
     func saveData() {
-        if let encoded = try? JSONEncoder().encode(workflows) {
-            UserDefaults.standard.set(encoded, forKey: "workflows")
-        }
-
-        if let encoded = try? JSONEncoder().encode(goals) {
-            UserDefaults.standard.set(encoded, forKey: "goals")
-        }
-
-        if let encoded = try? JSONEncoder().encode(focusSessions) {
-            UserDefaults.standard.set(encoded, forKey: "focusSessions")
-        }
-
-        if let encoded = try? JSONEncoder().encode(reviewCards) {
-            UserDefaults.standard.set(encoded, forKey: "reviewCards")
-        }
+        save(workflows, key: "workflows")
+        save(goals, key: "goals")
+        save(focusSessions, key: "focusSessions")
+        save(reviewCards, key: "reviewCards")
     }
 }

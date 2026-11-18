@@ -59,7 +59,7 @@ struct FolderDetailView: View {
         .navigationTitle(folder.name)
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showingAddTask) {
-            AddTaskSheet(todoManager: todoManager, isPresented: $showingAddTask)
+            AddTaskSheet(todoManager: todoManager, isPresented: $showingAddTask, defaultFolderId: folder.id)
         }
         .sheet(isPresented: $showingAddSubfolder) {
             AddSubfolderSheet(parentId: folder.id, todoManager: todoManager, isPresented: $showingAddSubfolder)

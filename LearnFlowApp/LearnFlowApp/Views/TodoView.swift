@@ -26,7 +26,7 @@ struct TodoView: View {
                 } else if selectedTab == 2 {
                     FoldersView(todoManager: todoManager)
                 } else {
-                    TaskGraphView(todoManager: todoManager, folderId: nil)
+                    TaskGraphView(todoManager: todoManager, folderId: nil, showAllTasks: true)
                 }
             }
             .navigationTitle("待办")
@@ -235,6 +235,7 @@ struct TaskRowView: View {
 struct AddTaskSheet: View {
     @ObservedObject var todoManager: TodoManager
     @Binding var isPresented: Bool
+    var defaultFolderId: UUID? = nil
     @State private var title = ""
     @State private var description = ""
     @State private var selectedFolderId: UUID?
@@ -269,6 +270,11 @@ struct AddTaskSheet: View {
                 }
                 .disabled(title.isEmpty)
             )
+            .onAppear {
+                if selectedFolderId == nil {
+                    selectedFolderId = defaultFolderId
+                }
+            }
         }
     }
 }
